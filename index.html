@@ -209,6 +209,10 @@ a{color:var(--kraft-ink)}
 /* presence chips on mobile topbar */
 .topbar .pres-mini{display:flex;gap:4px;align-items:center}
 .topbar .pres-mini .av{width:22px;height:22px;border:2px solid #fff;font-size:10px}
+.modo-sw{display:flex;gap:4px;background:rgba(255,255,255,.06);border-radius:9px;padding:3px;margin-bottom:10px}
+.modo-sw button{flex:1;border:none;background:none;color:#A79E8F;font-size:11.5px;font-weight:700;padding:6px 4px;border-radius:7px;cursor:pointer}
+.modo-sw button.on{background:var(--kraft);color:#1C1B19}
+.tbl tr.rowbad td{background:var(--bad-bg)}
 </style>
 </head>
 <body>
@@ -299,33 +303,61 @@ function refOpts(tipo){return S.despensa.filter(d=>!tipo||d.tipo===tipo).map(d=>
 
 // ---- INICIO (dashboard propietario) ----
 function vInicio(){
-  const C=compute(), A=alerts(), saldo=saldoCaja();
-  const t=todayISO();
-  const ventasUnid=S.produccion.reduce((a,p)=>a+(p.vendidas||0),0);
-  const ingresosCaja=S.caja.reduce((a,m)=>a+(m.ingreso||0),0);
-  const pedidosAbiertos=S.pedidos.filter(p=>!["entregado","retirado","cancelado"].includes(p.estado)).length;
-  let kpis=`
-    <div class="kpi hero"><div class="l">Precio sugerido / unidad</div><div class="v">${money2(C.precio_u)}</div><div class="s">1/2 docena ${money(C.precio_envase)}</div></div>
-    <div class="kpi kraft"><div class="l">Costo directo / u</div><div class="v">${money2(C.directo_u)}</div><div class="s">ingred ${money2(C.ingred_u)} + pack ${money2(C.pack_u)}</div></div>
-    <div class="kpi"><div class="l">Costo sostenible / u</div><div class="v">${money2(C.sostenible_u)}</div><div class="s">fija el precio</div></div>
-    <div class="kpi"><div class="l">Costo caja real / u</div><div class="v">${money2(C.caja_u)}</div><div class="s">sale del bolsillo hoy</div></div>
-    <div class="kpi"><div class="l">Contribución / u</div><div class="v">${money2(C.contrib_u)}</div><div class="s">precio − directo</div></div>
-    <div class="kpi"><div class="l">Margen sobre caja hoy</div><div class="v">${pct(C.margen_caja)}</div><div class="s">colchón ${money2(C.colchon_u)}/u</div></div>
-    <div class="kpi"><div class="l">% carne en el costo</div><div class="v">${pct(C.pct_carne)}</div><div class="s">${money2(C.carne_u)}/u</div></div>
-    <div class="kpi"><div class="l">Equilibrio / mes</div><div class="v">${C.equilibrio} u</div><div class="s">para cubrir fijos imputados</div></div>`;
-  let alertCard = A.length
+  const C=compute(), A=alerts(), saldo=saldoCaja(), uxe=C.uxe, t=todayISO();
+  const mes=mesActualISO();
+  const ventasMes=S.produccion.filter(p=>(p.fecha||"").slice(0,7)===mes).reduce((a,p)=>a+(p.vendidas||0),0);
+  const stockU=S.produccion.reduce((a,p)=>a+((p.unidades||0)-(p.vendidas||0)),0);
+  const cajasStock=Math.max(0,stockU/uxe);
+  const tope=S.motor.topeFreezer||48;
+  const abiertos=S.pedidos.filter(p=>!["entregado","retirado","cancelado"].includes(p.estado));
+  const unidPedidas=abiertos.reduce((a,p)=>{const lp=S.listaPrecios.find(l=>l.nombre===p.variante);const u=lp?(lp.unidades||0):0;return a+u*(p.cantidad||0);},0);
+  const alcanza=stockU>=unidPedidas;
+
+  if(getModo()==="produccion"){
+    const prox=abiertos.slice().sort((a,b)=>(a.fechaEntrega||"").localeCompare(b.fechaEntrega||""));
+    const cardP=p=>{
+      const lp=S.listaPrecios.find(l=>l.nombre===p.variante); const u=lp?(lp.unidades||0):0; const cajas=u?((p.cantidad||0)*u/uxe):0;
+      const dias=p.fechaEntrega?Math.round((new Date(p.fechaEntrega)-new Date(t))/86400000):null;
+      const tag=dias==null?'':(dias<0?`<span class="pill bad">atrasado</span>`:dias===0?`<span class="pill warn">hoy</span>`:dias===1?`<span class="pill info">mañana</span>`:`<span class="pill mut">en ${dias} días</span>`);
+      return `<tr><td><b>${esc(p.clienteNombre||'—')}</b><div style="font-size:12px;color:var(--ink-faint)">${esc(p.variante||'')}</div></td>
+        <td class="num"><b>${(p.cantidad||0)*u} u</b><div style="font-size:12px;color:var(--ink-faint)">${cajas.toLocaleString(LOCALE,{maximumFractionDigits:1})} cajas</div></td>
+        <td>${fdate(p.fechaEntrega)} ${tag}</td></tr>`;
+    };
+    return pageH("Producción · "+fdate(t),"Pedidos a preparar. Tocá Pedidos para el detalle.")+
+      `<div class="grid kpis" style="margin-bottom:16px">
+         <div class="kpi hero"><div class="l">Cajas en freezer</div><div class="v">${Math.floor(cajasStock)} / ${tope}</div></div>
+         <div class="kpi kraft"><div class="l">Pedidos por entregar</div><div class="v">${abiertos.length}</div><div class="s">${unidPedidas} u pedidas</div></div>
+       </div>
+       <div class="card"><div class="card-h"><h2>Por preparar / entregar</h2></div>
+        <div class="card-b flush scroll-x">${prox.length?`<table class="tbl"><thead><tr><th>Cliente</th><th>Cantidad</th><th>Entrega</th></tr></thead><tbody>${prox.map(cardP).join("")}</tbody></table>`:empty("✅","No hay pedidos pendientes.")}</div></div>`;
+  }
+
+  const Y=new Date().getFullYear();
+  const meses=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const serie=meses.map((lab,i)=>{const mm=Y+"-"+String(i+1).padStart(2,"0");return {label:lab,value:S.produccion.filter(p=>(p.fecha||"").slice(0,7)===mm).reduce((a,p)=>a+(p.vendidas||0),0)};});
+
+  const kpis=`
+    <div class="kpi hero"><div class="l">Unidades vendidas este mes</div><div class="v">${ventasMes}</div><div class="s">${fdate(t)}</div></div>
+    <div class="kpi kraft"><div class="l">Cajas en freezer</div><div class="v">${Math.floor(cajasStock)} / ${tope}</div><div class="s">producidas − vendidas, ÷ ${uxe}</div></div>
+    <div class="kpi"><div class="l">Pedidos abiertos</div><div class="v">${abiertos.length}</div><div class="s ${alcanza?'':'neg'}">${alcanza?'el stock alcanza':'falta stock'} (${unidPedidas} u)</div></div>
+    <div class="kpi"><div class="l">Saldo de caja</div><div class="v ${saldo<0?'neg':''}">${money(saldo)}</div><div class="s">ingresos − egresos</div></div>
+    <div class="kpi"><div class="l">Precio fijado / caja</div><div class="v">${money(C.precio_fijo_caja)}</div><div class="s">${money2(C.precio_fijo_u)}/u</div></div>
+    <div class="kpi ${C.precio_bajo_costo?'':'kraft'}"><div class="l">Margen real al precio fijado</div><div class="v ${C.precio_bajo_costo?'neg':''}">${pct(C.margen_real)}</div><div class="s">gana ${money2(C.gan_real_u)}/u sobre el costo real</div></div>
+    <div class="kpi"><div class="l">Costo de producir 1 u</div><div class="v">${money2(C.directo_u)}</div><div class="s">ingred+tapa ${money2(C.ingred_u)} + caja ${money2(C.pack_u)}${C.mano_u?` + mano ${money2(C.mano_u)}`:''}</div></div>
+    <div class="kpi"><div class="l">Equilibrio del mes</div><div class="v">${C.equilibrio} u</div><div class="s">para cubrir los fijos</div></div>`;
+  const alertCard = A.length
     ? `<div class="card"><div class="card-h"><h2>🔔 Alertas <span class="pill bad">${A.length}</span></h2><button class="btn sm" onclick="go('alertas')">Ver todas</button></div><div class="card-b">${A.slice(0,4).map(a=>alertHTML(a)).join("")}</div></div>`
     : `<div class="card"><div class="card-b"><div class="alert ok"><span class="ai">✅</span><div><b>Todo en orden</b><p>No hay alertas activas.</p></div></div></div></div>`;
   return pageH("Inicio", "Resumen del negocio · Mendoza · "+fdate(t))+
     `<div class="grid kpis" style="margin-bottom:18px">${kpis}</div>`+
+    `<div class="card"><div class="card-h"><h2>Ventas por mes · ${Y}</h2><div class="sub">unidades vendidas, mes a mes</div></div><div class="card-b">${barChart(serie)}</div></div>`+
     `<div class="split">
        ${alertCard}
-       <div class="card"><div class="card-h"><h2>Resumen operativo</h2></div><div class="card-b">
+       <div class="card"><div class="card-h"><h2>De dónde sale el precio</h2></div><div class="card-b">
+         <div class="hint" style="margin-bottom:10px">Precio sugerido = costo real por u ÷ (1 − margen ${pct(S.motor.margen)}) = <b>${money2(C.precio_u)}</b>. Vos cobrás <b>${money2(C.precio_fijo_u)}</b> → ${C.precio_fijo_u>=C.precio_u?'estás por encima del sugerido 👍':'estás por debajo del sugerido'}.</div>
          <div class="grid kpis" style="grid-template-columns:1fr 1fr">
-           <div class="kpi"><div class="l">Saldo de caja</div><div class="v ${saldo<0?'neg':''}">${money(saldo)}</div></div>
-           <div class="kpi"><div class="l">Pedidos abiertos</div><div class="v">${pedidosAbiertos}</div></div>
-           <div class="kpi"><div class="l">Unidades vendidas</div><div class="v">${ventasUnid}</div></div>
-           <div class="kpi"><div class="l">Ingresos cargados</div><div class="v">${money(ingresosCaja)}</div></div>
+           <div class="kpi"><div class="l">Costo real / u (sostenible)</div><div class="v">${money2(C.sostenible_u)}</div></div>
+           <div class="kpi"><div class="l">Lo que pago hoy / u</div><div class="v">${money2(C.caja_u)}</div></div>
          </div>
        </div></div>
      </div>`;
@@ -336,33 +368,35 @@ function alertHTML(a){return `<div class="alert ${a.t}"><span class="ai">${a.ic}
 function vCalc(){
   const C=compute(),m=S.motor;
   const out=(l,v,s,cls)=>`<div class="kpi ${cls||''}"><div class="l">${l}</div><div class="v">${v}</div>${s?`<div class="s">${s}</div>`:""}</div>`;
-  return pageH("Calculadora de precio","Editá las palancas y todo se recalcula al instante. Reproduce tu Excel exactamente.")+
-  `<div class="card"><div class="card-h"><h2>Palancas</h2><div class="sub">Cambiá estos valores para simular</div></div><div class="card-b">
+  return pageH("Calculadora de precio","Cambiá las variables de simulación y todo se recalcula al instante.")+
+  `<div class="card"><div class="card-h"><h2>Variables de simulación</h2><div class="sub">Cambialas para probar escenarios</div></div><div class="card-b">
      <div class="form-grid">
-       <div class="field"><label>Unidades / mes (volumen)</label><input class="inp" type="number" value="${m.volumen}" onchange="setMotor('volumen',this.value)"></div>
+       <div class="field"><label>Unidades estimadas por mes</label><input class="inp" type="number" value="${m.volumen}" onchange="setMotor('volumen',this.value)"><div class="hint" style="margin:4px 0 0">Para repartir los gastos fijos entre las unidades del mes.</div></div>
        <div class="field"><label>Margen objetivo (0–1)</label><input class="inp" type="number" step="0.01" value="${m.margen}" onchange="setMotor('margen',this.value)"></div>
-       <div class="field"><label>Buffer imprevistos (0–1)</label><input class="inp" type="number" step="0.01" value="${m.buffer}" onchange="setMotor('buffer',this.value)"></div>
-       <div class="field"><label>Rendimiento (u / tanda)</label><input class="inp" type="number" value="${m.rendimiento}" onchange="setMotor('rendimiento',this.value)"></div>
-       <div class="field"><label>Unidades por envase</label><input class="inp" type="number" value="${m.unidadesPorEnvase}" onchange="setMotor('unidadesPorEnvase',this.value)"></div>
+       <div class="field"><label>Margen de imprevistos (0–1)</label><input class="inp" type="number" step="0.01" value="${m.buffer}" onchange="setMotor('buffer',this.value)"><div class="hint" style="margin:4px 0 0">Colchón por roturas, mermas o errores.</div></div>
+       <div class="field"><label>Unidades por caja</label><input class="inp" type="number" value="${m.unidadesPorEnvase}" onchange="setMotor('unidadesPorEnvase',this.value)"></div>
+       <div class="field"><label>Rendimiento (u / tanda 4 kg)</label><input class="inp" type="number" value="${(C.rend).toLocaleString(LOCALE,{maximumFractionDigits:0})}" disabled style="opacity:.7"><div class="hint" style="margin:4px 0 0">Se calcula solo desde la receta.</div></div>
      </div>
-     <div class="hint" style="margin-top:14px">Margen ${pct(m.margen)} · Buffer ${pct(m.buffer)}. El costo de ingredientes y packaging sale de las hojas <b>Despensa</b> y <b>Receta</b>; los fijos, de <b>Costos</b> e <b>Inversión</b>.</div>
+     <div class="hint" style="margin-top:14px">Margen ${pct(m.margen)} · Imprevistos ${pct(m.buffer)}. El costo de ingredientes y caja sale de <b>Despensa</b> y <b>Receta</b>; los fijos, de <b>Costos</b> e <b>Inversión</b>.</div>
    </div></div>
    <div class="card"><div class="card-h"><h2>Resultados</h2></div><div class="card-b">
      <div class="grid kpis">
-       ${out("PRECIO SUGERIDO / U",money2(C.precio_u),"valor de venta por unidad","hero")}
-       ${out("PRECIO 1/2 DOCENA",money(C.precio_envase),`× ${C.uxe} unidades`,"kraft")}
-       ${out("Costo directo / u",money2(C.directo_u),"ingredientes + packaging")}
-       ${out("Costo sostenible / u",money2(C.sostenible_u),"con fijos imputados")}
-       ${out("Costo caja real / u",money2(C.caja_u),"lo que sale hoy")}
-       ${out("Contribución / u",money2(C.contrib_u),"precio − directo")}
-       ${out("Colchón / u",money2(C.colchon_u),"sostenible − caja")}
-       ${out("Ganancia sostenible / u",money2(C.ganancia_sost_u),"precio − sostenible")}
-       ${out("Margen sobre caja hoy",pct(C.margen_caja),"")}
-       ${out("% carne en costo",pct(C.pct_carne),money2(C.carne_u)+"/u")}
-       ${out("Punto de equilibrio",C.equilibrio+" u/mes","cubre fijos imputados")}
+       ${out("PRECIO SUGERIDO / U",money2(C.precio_u),"costo real por u ÷ (1 − margen)","hero")}
+       ${out("PRECIO QUE COBRÁS / CAJA",money(C.precio_fijo_caja),`${money2(C.precio_fijo_u)}/u · fijado por vos`,"kraft")}
+       ${out("Costo de producir 1 u",money2(C.directo_u),"ingredientes + tapa + caja")}
+       ${out("Costo real por u (sostenible)",money2(C.sostenible_u),"con fijos + amortización")}
+       ${out("Lo que pago hoy / u",money2(C.caja_u),"sale del bolsillo ahora")}
+       ${out("Ganancia por unidad",money2(C.contrib_u),"precio − costo de producir")}
+       ${out("Reserva por u (colchón)",money2(C.colchon_u),"costo real − lo que pago hoy")}
+       ${out("Margen real al precio fijado",pct(C.margen_real),`gana ${money2(C.gan_real_u)}/u`)}
+       ${out("% carne en el costo",pct(C.pct_carne),money2(C.carne_u)+"/u")}
+       ${out("Punto de equilibrio",C.equilibrio+" u/mes","para cubrir los fijos")}
      </div>
+     <div class="card" style="margin-top:14px;border-color:var(--kraft)"><div class="card-b">
+       <div class="field"><label>Precio que cobrás por caja (${C.uxe} u)</label><input class="inp" type="number" value="${Math.round(C.precio_fijo_caja)}" onchange="setPrecioCaja(this.value)"><div class="hint" style="margin:4px 0 0">Lo fijás vos. El sistema no lo cambia: solo te avisa si queda por debajo del costo real (${money2(C.sostenible_u)}/u).</div></div>
+     </div></div>
      <div class="hint" style="margin-top:16px">
-       <b>Desglose mensual:</b> fijos imputados ${money(C.fijos_imp_mes)} · caja hoy ${money(C.fijos_caja_mes)} · amortización ${money(C.amort_mes)} · cuotas activas ${money(C.cuota_caja_mes)}.
+       <b>Desglose mensual:</b> fijos totales ${money(C.fijos_imp_mes)} · fijos que pago hoy ${money(C.fijos_caja_mes)} · amortización ${money(C.amort_mes)} · cuotas activas ${money(C.cuota_caja_mes)}.
      </div>
    </div></div>`;
 }
@@ -391,51 +425,85 @@ function vDespensa(){
 }
 
 // ---- RECETA ----
+function toggleRecetaLock(){
+  if(S.motor.recetaLock===false){ S.motor.recetaLock=true; save(); render(); toast("🔒 Receta bloqueada"); }
+  else { confirmBox("Desbloquear receta","La receta es la base de TODO el costeo. Desbloqueá solo si vas a corregir la fórmula real (lo hace Cheo). ¿Seguimos?",()=>{S.motor.recetaLock=false;save();render();toast("🔓 Receta desbloqueada");}); }
+}
 function vReceta(){
   const C=compute(),m=S.motor;
-  const row=(coll,r)=>`<tr>
-    <td style="min-width:150px"><select onchange="edit('${coll}','${r.id}','ref',this.value)">${S.despensa.map(d=>`<option ${d.nombre===r.ref?'selected':''}>${esc(d.nombre)}</option>`).join("")}</select></td>
-    <td style="width:120px"><input class="num" type="number" value="${r.cantidad??''}" onchange="edit('${coll}','${r.id}','cantidad',this.value,1)"></td>
-    <td style="width:60px">${esc(r.unidad||'')}</td>
-    <td class="calc">${money2(usoOf(r.ref))}</td>
-    <td class="calc">${money2((r.cantidad||0)*usoOf(r.ref))}</td>
-    <td><button class="row-x" onclick="delRow('${coll}','${r.id}','${esc(r.ref)}')">×</button></td></tr>`;
-  const head=`<thead><tr><th>Ingrediente</th><th>Cant./tanda</th><th>Un.</th><th>$/u</th><th>Costo</th><th></th></tr></thead>`;
-  const addR=coll=>`onclick="openForm('Agregar a receta',[{key:'ref',label:'Insumo',type:'select',opts: refOpts('ing'),full:true},{key:'cantidad',label:'Cantidad por tanda',type:'number'},{key:'unidad',label:'Unidad',val:'g'}],o=>add('${coll}',o))"`;
-  const packRow=r=>`<tr>
-    <td><select onchange="edit('packagingEnvase','${r.id}','ref',this.value)">${S.despensa.filter(d=>d.tipo==='pack').map(d=>`<option ${d.nombre===r.ref?'selected':''}>${esc(d.nombre)}</option>`).join("")}</select></td>
-    <td style="width:120px"><input class="num" type="number" value="${r.cantidad??''}" onchange="edit('packagingEnvase','${r.id}','cantidad',this.value,1)"></td>
-    <td class="calc">${money2(usoOf(r.ref))}</td>
-    <td class="calc">${money2((r.cantidad||0)*usoOf(r.ref))}</td>
-    <td><button class="row-x" onclick="delRow('packagingEnvase','${r.id}','${esc(r.ref)}')">×</button></td></tr>`;
-  return pageH("Receta","Gramaje por tanda. El costo sale de la Despensa.")+
-   `<div class="card"><div class="card-h"><h2>Relleno</h2><button class="btn kr sm" ${addR('recetaRelleno')}>+ Ingrediente</button></div>
-     <div class="card-b flush scroll-x"><table class="tbl">${head}<tbody>${S.recetaRelleno.map(r=>row('recetaRelleno',r)).join("")}</tbody>
-     <tfoot><tr><td colspan="4">Subtotal relleno</td><td class="num">${money2(C.subRelleno)}</td><td></td></tr></tfoot></table></div></div>
-    <div class="card"><div class="card-h"><h2>Masa</h2><button class="btn kr sm" ${addR('recetaMasa')}>+ Ingrediente</button></div>
-     <div class="card-b flush scroll-x"><table class="tbl">${head}<tbody>${S.recetaMasa.map(r=>row('recetaMasa',r)).join("")}</tbody>
-     <tfoot><tr><td colspan="4">Subtotal masa</td><td class="num">${money2(C.subMasa)}</td><td></td></tr>
-            <tr><td colspan="4">Subtotal ingredientes / tanda</td><td class="num">${money2(C.subIngred)}</td><td></td></tr></tfoot></table></div></div>
-    <div class="split">
-     <div class="card"><div class="card-h"><h2>Rendimiento</h2></div><div class="card-b">
-       <div class="form-grid">
-         <div class="field"><label>Unidades por tanda</label><input class="inp" type="number" value="${m.rendimiento}" onchange="setMotor('rendimiento',this.value)"></div>
-         <div class="field"><label>Unidades por envase</label><input class="inp" type="number" value="${m.unidadesPorEnvase}" onchange="setMotor('unidadesPorEnvase',this.value)"></div>
+  const locked=m.recetaLock!==false;
+  const fila=(coll,r)=>{
+    const cost=(r.cantidad||0)*usoOf(r.ref);
+    if(locked){
+      return `<tr><td><b>${esc(r.ref)}</b></td>
+        <td class="num">${(r.cantidad??0).toLocaleString(LOCALE,{maximumFractionDigits:2})}</td>
+        <td style="width:50px">${esc(r.unidad||'')}</td>
+        <td class="calc">${money2(usoOf(r.ref))}</td>
+        <td class="calc">${money2(cost)}</td></tr>`;
+    }
+    return `<tr>
+      <td style="min-width:150px"><select onchange="edit('${coll}','${r.id}','ref',this.value)">${S.despensa.map(d=>`<option ${d.nombre===r.ref?'selected':''}>${esc(d.nombre)}</option>`).join("")}</select></td>
+      <td style="width:110px"><input class="num" type="number" step="0.01" value="${r.cantidad??''}" onchange="edit('${coll}','${r.id}','cantidad',this.value,1)"></td>
+      <td style="width:60px"><input class="num" style="width:46px" value="${esc(r.unidad||'')}" onchange="edit('${coll}','${r.id}','unidad',this.value)"></td>
+      <td class="calc">${money2(usoOf(r.ref))}</td>
+      <td class="calc">${money2(cost)}</td>
+      <td><button class="row-x" onclick="delRow('${coll}','${r.id}','${esc(r.ref)}')">×</button></td></tr>`;
+  };
+  const head=`<thead><tr><th>Componente</th><th>Cant./sfija</th><th>Un.</th><th>$/uso</th><th>Costo/sfija</th>${locked?'':'<th></th>'}</tr></thead>`;
+  const addR=`onclick="openForm('Agregar a la receta',[{key:'ref',label:'Insumo',type:'select',opts:refOpts('ing'),full:true},{key:'cantidad',label:'Cantidad por sfija',type:'number'},{key:'unidad',label:'Unidad',val:'g'}],o=>add('recetaRelleno',o))"`;
+  const packFila=r=>{
+    const cost=(r.cantidad||0)*usoOf(r.ref);
+    if(locked) return `<tr><td><b>${esc(r.ref)}</b></td><td class="num">${r.cantidad??0}</td><td class="calc">${money2(usoOf(r.ref))}</td><td class="calc">${money2(cost)}</td></tr>`;
+    return `<tr>
+      <td><select onchange="edit('packagingEnvase','${r.id}','ref',this.value)">${S.despensa.filter(d=>d.tipo==='pack').map(d=>`<option ${d.nombre===r.ref?'selected':''}>${esc(d.nombre)}</option>`).join("")}</select></td>
+      <td style="width:110px"><input class="num" type="number" value="${r.cantidad??''}" onchange="edit('packagingEnvase','${r.id}','cantidad',this.value,1)"></td>
+      <td class="calc">${money2(usoOf(r.ref))}</td><td class="calc">${money2(cost)}</td>
+      <td><button class="row-x" onclick="delRow('packagingEnvase','${r.id}','${esc(r.ref)}')">×</button></td></tr>`;
+  };
+  const rend_tanda=C.rend_kg*4, rend_8=C.rend_kg*8;
+
+  const lockBar=`<div class="card" style="margin-bottom:16px;border-color:${locked?'var(--line)':'var(--kraft)'}">
+    <div class="card-b" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div><b>${locked?'🔒 Receta bloqueada':'🔓 Receta desbloqueada (editando)'}</b>
+        <div class="hint" style="margin:4px 0 0">${locked?'La fórmula está protegida para que no se cambie sin querer. Es la base de todo el costeo.':'Cuidado: estás editando la fórmula real. Cuando termines, volvé a bloquearla.'}</div></div>
+      <button class="btn ${locked?'kr':'pri'} sm" onclick="toggleRecetaLock()">${locked?'Desbloquear':'Bloquear'}</button>
+    </div></div>`;
+
+  return pageH("Receta","La fórmula real de una sfija. Si cambia acá, cambia TODO el costeo.")+
+   lockBar+
+   `<div class="card"><div class="card-h"><h2>Una sfija lleva</h2>${locked?'':`<button class="btn kr sm" ${addR}>+ Componente</button>`}</div>
+     <div class="card-b flush scroll-x"><table class="tbl">${head}<tbody>${S.recetaRelleno.map(r=>fila('recetaRelleno',r)).join("")}</tbody>
+     <tfoot>
+       <tr><td colspan="${locked?4:5}">Relleno por sfija (sin tapa)</td><td class="num">${C.relleno_g.toLocaleString(LOCALE,{maximumFractionDigits:1})} g</td>${locked?'':'<td></td>'}</tr>
+       <tr><td colspan="${locked?4:5}"><b>Costo ingredientes + tapa / unidad</b></td><td class="num"><b>${money2(C.ingred_u)}</b></td>${locked?'':'<td></td>'}</tr>
+     </tfoot></table></div>
+     <div class="card-b"><div class="hint">Cada costo sale de la Despensa: <b>$/uso × cantidad</b>. Ej.: carne ${money2(usoOf("Carne (aguja/intermedia)"))}/g × ${C.carne_g_u} g = ${money2(C.carne_u)} por sfija. El relleno da ~${C.relleno_g.toLocaleString(LOCALE,{maximumFractionDigits:0})} g y la tapa va aparte.</div></div>
+   </div>
+
+   <div class="split">
+     <div class="card"><div class="card-h"><h2>Rendimiento (se calcula solo)</h2></div><div class="card-b">
+       <div class="grid kpis" style="grid-template-columns:1fr 1fr">
+         <div class="kpi"><div class="l">Carne por unidad</div><div class="v">${C.carne_g_u} g</div><div class="s">de la receta</div></div>
+         <div class="kpi kraft"><div class="l">Unidades por kg</div><div class="v">${C.rend_kg.toLocaleString(LOCALE,{maximumFractionDigits:1})}</div><div class="s">1000 g ÷ ${C.carne_g_u} g</div></div>
+         <div class="kpi"><div class="l">Por tanda (4 kg)</div><div class="v">${rend_tanda.toLocaleString(LOCALE,{maximumFractionDigits:0})} u</div></div>
+         <div class="kpi"><div class="l">Estándar 8 kg (2 tandas)</div><div class="v">${rend_8.toLocaleString(LOCALE,{maximumFractionDigits:0})} u</div></div>
        </div>
-       <div class="grid kpis" style="grid-template-columns:1fr;margin-top:14px">
-         <div class="kpi kraft"><div class="l">Costo ingredientes / unidad</div><div class="v">${money2(C.ingred_u)}</div></div>
-       </div>
+       <div class="hint" style="margin-top:12px">Ya no se carga a mano: sale de cuánta carne lleva cada sfija. Si cambia la carne por unidad, el rinde se recalcula solo.</div>
      </div></div>
-     <div class="card"><div class="card-h"><h2>Packaging por envase</h2><button class="btn kr sm" onclick="openForm('Agregar packaging',[{key:'ref',label:'Ítem',type:'select',opts:refOpts('pack'),full:true},{key:'cantidad',label:'Cantidad',type:'number',val:1}],o=>add('packagingEnvase',o))">+</button></div>
-      <div class="card-b flush scroll-x"><table class="tbl"><thead><tr><th>Componente</th><th>Cant.</th><th>$/u</th><th>Costo</th><th></th></tr></thead>
-      <tbody>${S.packagingEnvase.map(packRow).join("")}</tbody>
-      <tfoot><tr><td colspan="3">Packaging / envase</td><td class="num">${money2(C.packEnvase)}</td><td></td></tr>
-             <tr><td colspan="3">Packaging / unidad</td><td class="num">${money2(C.pack_u)}</td><td></td></tr></tfoot></table></div></div>
-    </div>
-    <div class="card"><div class="card-b"><div class="grid kpis" style="grid-template-columns:1fr 1fr 1fr">
-      <div class="kpi"><div class="l">Ingredientes / u</div><div class="v">${money2(C.ingred_u)}</div></div>
-      <div class="kpi"><div class="l">Packaging / u</div><div class="v">${money2(C.pack_u)}</div></div>
-      <div class="kpi hero"><div class="l">Costo directo / unidad</div><div class="v">${money2(C.directo_u)}</div></div>
+
+     <div class="card"><div class="card-h"><h2>Caja / envase</h2>${locked?'':`<button class="btn kr sm" onclick="openForm('Agregar al envase',[{key:'ref',label:'Ítem',type:'select',opts:refOpts('pack'),full:true},{key:'cantidad',label:'Cantidad',type:'number',val:1}],o=>add('packagingEnvase',o))">+</button>`}</div>
+      <div class="card-b flush scroll-x"><table class="tbl"><thead><tr><th>Componente</th><th>Cant.</th><th>$/uso</th><th>Costo</th>${locked?'':'<th></th>'}</tr></thead>
+      <tbody>${S.packagingEnvase.map(packFila).join("")}</tbody>
+      <tfoot><tr><td colspan="3">Caja completa (${C.uxe} u)</td><td class="num">${money2(C.packEnvase)}</td>${locked?'':'<td></td>'}</tr>
+             <tr><td colspan="3">Caja por unidad</td><td class="num">${money2(C.pack_u)}</td>${locked?'':'<td></td>'}</tr></tfoot></table></div>
+      <div class="card-b"><div class="hint">La caja se reparte entre las ${C.uxe} unidades que entran: ${money2(C.packEnvase)} ÷ ${C.uxe} = ${money2(C.pack_u)}/u.</div></div>
+     </div>
+   </div>
+
+   <div class="card"><div class="card-b"><div class="grid kpis" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="kpi"><div class="l">Ingredientes + tapa / u</div><div class="v">${money2(C.ingred_u)}</div></div>
+      <div class="kpi"><div class="l">Caja / u</div><div class="v">${money2(C.pack_u)}</div></div>
+      <div class="kpi hero"><div class="l">Costo de producir 1 unidad</div><div class="v">${money2(C.directo_u)}</div><div class="s">ingredientes + tapa + caja</div></div>
     </div></div></div>`;
 }
 
@@ -465,8 +533,19 @@ function vCostos(){
      <div class="card-b flush scroll-x"><table class="tbl"><thead><tr><th>Concepto</th><th>Monto</th><th>Vida (m)</th><th>$/mes</th><th style="text-align:center">¿Hoy?</th><th></th></tr></thead><tbody>${S.costosServicios.map(servRow).join("")}</tbody></table></div></div>
     <div class="card"><div class="card-h"><h2>Traslados y semi-variables</h2><button class="btn kr sm" onclick="openForm('Nuevo semi-variable',[{key:'concepto',label:'Concepto',full:true},{key:'monto',label:'$/viaje',type:'number'},{key:'cant',label:'Cant./mes',type:'number'},{key:'pagaHoy',label:'¿Paga hoy?',type:'check'}],o=>add('costosSemivar',o))">+</button></div>
      <div class="card-b flush scroll-x"><table class="tbl"><thead><tr><th>Concepto</th><th>$/viaje</th><th>Cant/mes</th><th>$/mes</th><th style="text-align:center">¿Hoy?</th><th></th></tr></thead><tbody>${S.costosSemivar.map(semiRow).join("")}</tbody></table></div></div>
+    <div class="card"><div class="card-h"><h2>Mano de obra</h2><div class="sub">Se suma al costo de cada unidad. Dejalo en 0 si todavía no lo cargás.</div></div><div class="card-b">
+       ${(()=>{const mano=m.mano||{};return `<div class="form-grid">
+         <div class="field"><label>Producción general ($/hora)</label><input class="inp" type="number" value="${mano.horaProd??0}" onchange="setMano('horaProd',this.value)"></div>
+         <div class="field"><label>Horas por tanda (4 kg)</label><input class="inp" type="number" step="0.5" value="${mano.horasTanda??0}" onchange="setMano('horasTanda',this.value)"></div>
+         <div class="field"><label>Cebolla picada ($/kg)</label><input class="inp" type="number" value="${mano.cebollaKg??0}" onchange="setMano('cebollaKg',this.value)"></div>
+         <div class="field"><label>Limón exprimido ($/kg)</label><input class="inp" type="number" value="${mano.limonKg??0}" onchange="setMano('limonKg',this.value)"></div>
+         <div class="field"><label>Menta separada ($/atado)</label><input class="inp" type="number" value="${mano.mentaAtado??0}" onchange="setMano('mentaAtado',this.value)"></div>
+       </div>
+       <div class="grid kpis" style="grid-template-columns:1fr;margin-top:12px"><div class="kpi kraft"><div class="l">Mano de obra por unidad</div><div class="v">${money2(C.mano_u)}</div><div class="s">general ${money2(C.mano_gen_u)} + preparación ${money2(C.prep_cebolla_u+C.prep_limon_u+C.prep_menta_u)}</div></div></div>
+       <div class="hint" style="margin-top:10px">General/u = $/hora × horas por tanda ÷ unidades por tanda. Preparación/u = $/kg × kg que lleva cada sfija.</div>`;})()}
+    </div></div>
     <div class="split">
-      <div class="card"><div class="card-h"><h2>Buffer</h2></div><div class="card-b"><div class="field"><label>Buffer de imprevistos (0–1)</label><input class="inp" type="number" step="0.01" value="${m.buffer}" onchange="setMotor('buffer',this.value)"></div></div></div>
+      <div class="card"><div class="card-h"><h2>Margen de imprevistos</h2></div><div class="card-b"><div class="field"><label>Margen de imprevistos (0–1)</label><input class="inp" type="number" step="0.01" value="${m.buffer}" onchange="setMotor('buffer',this.value)"><div class="hint" style="margin:4px 0 0">Colchón por roturas, mermas o errores.</div></div></div></div>
       <div class="card"><div class="card-h"><h2>Totales mensuales</h2></div><div class="card-b"><div class="grid kpis" style="grid-template-columns:1fr 1fr">
         <div class="kpi kraft"><div class="l">Imputado / mes</div><div class="v">${money(C.fijos_imp_mes)}</div></div>
         <div class="kpi"><div class="l">Caja hoy / mes</div><div class="v">${money(C.fijos_caja_mes)}</div></div>
@@ -558,8 +637,8 @@ function vPedidos(){
     <div class="split">
       <div class="card"><div class="card-h"><h2>Lista de precios</h2><button class="btn kr sm" onclick="openForm('Nueva variante',[{key:'nombre',label:'Nombre',full:true},{key:'unidades',label:'Unidades',type:'number'},{key:'precio',label:'Precio',type:'number'}],o=>add('listaPrecios',o))">+</button></div>
         <div class="card-b flush scroll-x"><table class="tbl"><thead><tr><th>Variante</th><th>Unidades</th><th>Precio</th><th></th></tr></thead><tbody>${listaRows}</tbody></table></div></div>
-      <div class="card"><div class="card-h"><h2>Clientes (${S.clientes.length})</h2><button class="btn kr sm" onclick="openForm('Nuevo cliente',[{key:'nombre',label:'Nombre',full:true},{key:'telefono',label:'Teléfono'},{key:'email',label:'Email'},{key:'direccion',label:'Dirección',full:true},{key:'localidad',label:'Localidad'},{key:'notas',label:'Notas',type:'textarea'}],o=>add('clientes',o))">+</button></div>
-        <div class="card-b flush scroll-x">${S.clientes.length?`<table class="tbl"><thead><tr><th>Nombre</th><th>Teléfono</th><th>Localidad</th><th></th></tr></thead><tbody>${S.clientes.map(c=>`<tr><td>${esc(c.nombre)}</td><td>${esc(c.telefono||'')}</td><td>${esc(c.localidad||'')}</td><td><button class="row-x" onclick="delRow('clientes','${c.id}','${esc(c.nombre)}')">×</button></td></tr>`).join("")}</tbody></table>`:empty("🙋","Sin clientes cargados.")}</div></div>
+      <div class="card"><div class="card-h"><h2>Clientes (${S.clientes.length})</h2><div style="display:flex;gap:6px"><button class="btn gh sm" onclick="exportClientesCSV()">Exportar</button><button class="btn kr sm" onclick="clienteModal()">+ Cliente</button></div></div>
+        <div class="card-b flush scroll-x">${S.clientes.length?`<table class="tbl"><thead><tr><th>Nombre</th><th>Teléfono</th><th>Entrega</th><th>Cumple</th><th></th></tr></thead><tbody>${S.clientes.map(c=>`<tr><td><b>${esc(c.nombre)}</b>${c.preferencias?`<div style="font-size:11px;color:var(--ink-faint)">${esc(c.preferencias)}</div>`:''}</td><td>${esc(c.telefono||'')}</td><td style="font-size:12px">${esc(c.diaEntrega||'')} ${esc(c.horario||'')}</td><td style="font-size:12px">${c.cumple?fdate(c.cumple):''}</td><td><button class="btn gh sm" onclick="clienteModal('${c.id}')">✎</button><button class="row-x" onclick="delRow('clientes','${c.id}','${esc(c.nombre)}')">×</button></td></tr>`).join("")}</tbody></table>`:empty("🙋","Sin clientes. Cargá uno con + Cliente.")}</div></div>
     </div>`;
 }
 function editPedido(id){
@@ -676,6 +755,106 @@ function vProveedores(){
     <div class="hint">Cada vez que cambiás el precio de un insumo (acá o en Despensa) queda guardado en el historial y la sugerencia se recalcula sola.</div>`;
 }
 
+// ---- SIMULADOR DE PRODUCCIÓN (Bloque 5) ----
+function vSimulador(){
+  const C=compute(), uxe=C.uxe, carne_g=C.carne_g_u||1;
+  const kg=simKg;
+  const unidades=carne_g>0?Math.floor(kg*1000/carne_g):0;
+  const sobranteU=carne_g>0?((kg*1000/carne_g)-unidades):0;
+  const cajas=unidades/uxe;
+  const tandas=kg/4;
+  const tope=S.motor.topeFreezer||48;
+  const stockU=S.produccion.reduce((a,p)=>a+((p.unidades||0)-(p.vendidas||0)),0);
+  const cajasStock=stockU/uxe;
+  const cajasTotal=cajasStock+cajas;
+  const excede=cajasTotal>tope;
+  const costoTotal=unidades*C.directo_u;
+  const ingreso=unidades*C.precio_fijo_u;
+  const ganancia=ingreso-unidades*C.directo_u;
+  const fmtCant=(n,u)=>u==='g'?(n>=1000?(n/1000).toLocaleString(LOCALE,{maximumFractionDigits:2})+' kg':n.toLocaleString(LOCALE,{maximumFractionDigits:0})+' g'):(n.toLocaleString(LOCALE,{maximumFractionDigits:0})+' '+(u||'u'));
+  const ingRows=S.recetaRelleno.map(r=>{
+    const necesito=(r.cantidad||0)*unidades;
+    const ins=S.despensa.find(d=>d.nombre===r.ref);
+    const cont=ins?(ins.contenido||0):0;
+    const packs=cont>0?Math.ceil(necesito/cont):0;
+    const sobra=cont>0?(packs*cont-necesito):0;
+    return `<tr>
+      <td><b>${esc(r.ref)}</b><div style="font-size:11px;color:var(--ink-faint)">${esc(ins?ins.compra:'')}</div></td>
+      <td class="num">${fmtCant(necesito,r.unidad)}</td>
+      <td class="num">${cont?`<b>${packs}</b> × ${cont}${r.unidad}`:'—'}${sobra>0?`<div style="font-size:11px;color:var(--ink-faint)">sobra ${fmtCant(sobra,r.unidad)}</div>`:''}</td>
+      <td class="num">${money(necesito*usoOf(r.ref))}</td></tr>`;
+  }).join("");
+  return pageH("Simulador de producción","Poné los kilos de carne y te dice todo: unidades, qué comprar y la ganancia.")+
+   `<div class="card"><div class="card-b">
+      <div class="form-grid">
+        <div class="field"><label>Kilos de carne</label><input class="inp" type="number" step="0.5" value="${kg}" onchange="setSimKg(this.value)"><div class="hint" style="margin:4px 0 0">Estándar: 8 kg = 2 tandas de 4 kg.</div></div>
+        <div class="field"><label>Equivale a</label><input class="inp" value="${tandas.toLocaleString(LOCALE,{maximumFractionDigits:1})} tandas de 4 kg" disabled style="opacity:.7"></div>
+      </div>
+      <div class="hint" style="margin-top:10px">Flujo: tanda 1 (4 kg) → precongelado → envasado → tanda 2 → bolsas → cajas → freezer.</div>
+   </div></div>
+   <div class="grid kpis" style="margin-bottom:16px">
+     <div class="kpi hero"><div class="l">Unidades</div><div class="v">${unidades}</div><div class="s">${kg} kg ÷ ${carne_g} g${sobranteU>=1?` (+${Math.floor(sobranteU)} de sobrante)`:''}</div></div>
+     <div class="kpi kraft"><div class="l">Cajas (${uxe} u)</div><div class="v">${cajas.toLocaleString(LOCALE,{maximumFractionDigits:1})}</div></div>
+     <div class="kpi"><div class="l">Costo total</div><div class="v">${money(costoTotal)}</div><div class="s">${money2(C.directo_u)}/u · ${money(C.directo_u*uxe)}/caja</div></div>
+     <div class="kpi"><div class="l">Ganancia al precio fijado</div><div class="v pos">${money(ganancia)}</div><div class="s">vende ${money(ingreso)}</div></div>
+   </div>
+   ${excede?`<div class="card" style="border-color:var(--bad);margin-bottom:16px"><div class="card-b"><div class="alert bad"><span class="ai">🧊</span><div><b>Supera el tope del freezer</b><p>Tenés ${Math.floor(cajasStock)} cajas en stock + ${cajas.toLocaleString(LOCALE,{maximumFractionDigits:0})} nuevas = ${cajasTotal.toLocaleString(LOCALE,{maximumFractionDigits:0})}, y el tope es ${tope}. Producí menos o vendé antes.</p></div></div></div></div>`
+     :`<div class="hint" style="margin-bottom:16px">Freezer: ${Math.floor(cajasStock)} en stock + ${cajas.toLocaleString(LOCALE,{maximumFractionDigits:0})} nuevas = ${cajasTotal.toLocaleString(LOCALE,{maximumFractionDigits:0})} / ${tope} cajas. ✅ Entra.</div>`}
+   <div class="card"><div class="card-h"><h2>Lista de compra</h2><div class="sub">"Necesito" = exacto · "Comprar" = packs enteros</div></div>
+     <div class="card-b flush scroll-x"><table class="tbl"><thead><tr><th>Insumo</th><th>Necesito</th><th>Comprar</th><th>Costo</th></tr></thead><tbody>${ingRows}</tbody>
+     <tfoot><tr><td colspan="3"><b>Costo de ingredientes + tapa</b></td><td class="num"><b>${money(unidades*C.ingred_u)}</b></td></tr></tfoot></table></div></div>`;
+}
+
+// ---- STOCK (Bloque 4) ----
+function reponerStock(id){
+  const d=dlu("despensa",id); if(!d)return;
+  openForm("Reponer / comprar · "+d.nombre,[
+    {key:"cantidad",label:`Cantidad que entra (${d.unidad||'u'})`,type:"number"},
+    {key:"precioNuevo",label:"Precio pagado del pack (opcional)",type:"number",val:d.precio??""},
+    {key:"proveedor",label:"Proveedor",type:"select",opts:[{v:"",t:"— sin proveedor —"}].concat(S.proveedores.map(p=>({v:p.nombre,t:p.nombre})))},
+  ],o=>{
+    const ant=d.precio||0, nue=o.precioNuevo||0;
+    if(nue && nue!==ant){ logPrecio(d, ant, nue, o.proveedor||null); d.precio=nue; }
+    d.stock=(d.stock||0)+(o.cantidad||0);
+    dbUpsert("despensa",d); render(); toast("Stock actualizado");
+  });
+}
+function vStock(){
+  const ins=S.despensa.slice().sort((a,b)=>a.tipo===b.tipo?0:(a.tipo==='ing'?-1:1));
+  let valor=0;
+  const rows=ins.map(d=>{
+    const v=(d.stock||0)*usoOf(d.nombre); valor+=v;
+    const bajo=d.stockMin!=null&&d.stock!=null&&d.stock<d.stockMin;
+    return `<tr class="${bajo?'rowbad':''}">
+      <td><b>${esc(d.nombre)}</b><div style="font-size:11px;color:var(--ink-faint)">${esc(d.compra||'')}</div></td>
+      <td><input class="num" type="number" value="${d.stock??''}" placeholder="—" onchange="edit('despensa','${d.id}','stock',this.value,1)"> ${esc(d.unidad||'')}</td>
+      <td><input class="num" type="number" value="${d.stockMin??''}" placeholder="—" onchange="edit('despensa','${d.id}','stockMin',this.value,1)"></td>
+      <td class="num">${money(v)}</td>
+      <td>${bajo?'<span class="pill bad">bajo</span>':'<span class="pill ok">ok</span>'}</td>
+      <td><button class="btn kr sm" onclick="reponerStock('${d.id}')">+ Reponer</button></td></tr>`;
+  }).join("");
+  return pageH("Stock","Cuánto tenés hoy de cada insumo. La ficha (precio/presentación) está en Despensa.")+
+   `<div class="grid kpis" style="margin-bottom:16px">
+      <div class="kpi"><div class="l">Insumos cargados</div><div class="v">${ins.length}</div></div>
+      <div class="kpi kraft"><div class="l">Valor del stock</div><div class="v">${money(valor)}</div><div class="s">a precio de compra</div></div>
+    </div>
+    <div class="card"><div class="card-b flush scroll-x"><table class="tbl"><thead><tr><th>Insumo</th><th>Stock hoy</th><th>Mínimo</th><th>Valor</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>
+    <div class="hint">"Reponer" suma al stock y, si cambió el precio, lo actualiza en Despensa y lo guarda en el historial de Proveedores.</div>`;
+}
+
+// ---- ALERTAS CONFIGURABLES (Bloque 9) ----
+function alertaCfgModal(){
+  openForm("Nueva alerta",[
+    {key:"tipo",label:"Tipo de alerta",type:"select",opts:[
+      {v:"stock_caja",t:"Stock de cajas por debajo de…"},
+      {v:"suba",t:"Un insumo subió más de … %"},
+      {v:"cumple",t:"Cumpleaños de cliente en … días"},
+    ],full:true},
+    {key:"umbral",label:"Valor (cajas / % / días)",type:"number"},
+    {key:"nombre",label:"Nombre (opcional)",full:true},
+  ],o=>{ if(o.umbral==null){toast("Poné un valor");return;} add("alertasCfg",o); });
+}
+
 // ---- COMPRAS ----
 function vCompras(){
   const totC=S.compras.reduce((a,c)=>a+(c.monto||0),0);
@@ -719,20 +898,38 @@ function vCaja(){
       <div class="kpi"><div class="l">Total egresos</div><div class="v neg">${money(eg)}</div></div>
       <div class="kpi hero"><div class="l">Saldo actual</div><div class="v">${money(saldo)}</div></div>
     </div>
+    <div class="card"><div class="card-h"><h2>Compromisos próximos 6 meses</h2><div class="sub">cuotas y compras a pagar</div></div><div class="card-b">
+       ${(()=>{const C=compute();const fin=S.equipos.filter(e=>e.financiado&&e.cuotaActiva);
+         const pend=S.compras.filter(c=>!c.pagado&&(c.tipoPago||'').toLowerCase().includes('créd'));
+         const cuotaMes=C.cuota_caja_mes; const pendTotal=pend.reduce((a,c)=>a+(c.monto||0),0);
+         const rows=fin.map(e=>`<tr><td>${esc(e.nombre)}</td><td class="num">${money((e.costo||0)/(e.cuotas||1))}/mes</td><td class="num">${e.cuotas} cuotas</td></tr>`).join("")
+           + pend.map(c=>`<tr><td>${esc(c.proveedor||'')} · ${esc(c.descripcion||'')}</td><td class="num">${money(c.monto||0)}</td><td class="num">${c.cuotas||1} cuota/s</td></tr>`).join("");
+         return `<div class="grid kpis" style="grid-template-columns:1fr 1fr;margin-bottom:12px">
+            <div class="kpi kraft"><div class="l">Cuotas / mes</div><div class="v">${money(cuotaMes)}</div><div class="s">freezer y financiados</div></div>
+            <div class="kpi"><div class="l">Compras a crédito sin pagar</div><div class="v">${money(pendTotal)}</div></div>
+          </div>`+(rows?`<table class="tbl"><thead><tr><th>Compromiso</th><th>Monto</th><th>Plazo</th></tr></thead><tbody>${rows}</tbody></table>`:`<div class="hint">Sin compromisos cargados.</div>`);
+       })()}
+    </div></div>
     <div class="card"><div class="card-b flush scroll-x">${S.caja.length?`<table class="tbl"><thead><tr><th>Fecha</th><th>Detalle</th><th>Medio</th><th>Ingreso</th><th>Egreso</th><th>Saldo</th><th></th></tr></thead><tbody>${rows}</tbody></table>`:empty("💵","Sin movimientos de caja.")}</div></div>`;
 }
 
 // ---- ALERTAS ----
 function vAlertas(){
   const A=alerts(),cfg=S.alertCfg;
-  return pageH("Alertas","Centro de avisos. Los umbrales son configurables.")+
+  const tipoLabel={stock_caja:"Stock de cajas <",suba:"Suba de insumo >",cumple:"Cumpleaños en"};
+  const tipoUnit={stock_caja:"cajas",suba:"%",cumple:"días"};
+  const customRows=(S.alertasCfg||[]).map(a=>`<tr><td><b>${esc(a.nombre||tipoLabel[a.tipo]||a.tipo)}</b></td><td>${esc(tipoLabel[a.tipo]||a.tipo)} ${a.umbral} ${tipoUnit[a.tipo]||''}</td><td><button class="row-x" onclick="delRow('alertasCfg','${a.id}','alerta')">×</button></td></tr>`).join("");
+  return pageH("Alertas","Centro de avisos. Los umbrales y las alertas propias son configurables.")+
    `<div class="card"><div class="card-h"><h2>Activas <span class="pill ${A.length?'bad':'ok'}">${A.length}</span></h2></div><div class="card-b">
       ${A.length?A.map(a=>alertHTML(a)).join(""):`<div class="alert ok"><span class="ai">✅</span><div><b>Todo en orden</b><p>No hay alertas activas en este momento.</p></div></div>`}
     </div></div>
-    <div class="card"><div class="card-h"><h2>Umbrales</h2></div><div class="card-b"><div class="form-grid">
+    <div class="card"><div class="card-h"><h2>Mis alertas</h2><button class="btn kr sm" onclick="alertaCfgModal()">+ Nueva alerta</button></div>
+     <div class="card-b flush scroll-x">${(S.alertasCfg||[]).length?`<table class="tbl"><thead><tr><th>Nombre</th><th>Condición</th><th></th></tr></thead><tbody>${customRows}</tbody></table>`:`<div class="hint">Creá alertas propias: stock bajo de cajas, suba de un insumo, o cumpleaños de clientes.</div>`}</div></div>
+    <div class="card"><div class="card-h"><h2>Umbrales generales</h2></div><div class="card-b"><div class="form-grid">
       <div class="field"><label>Caja mínima ($)</label><input class="inp" type="number" value="${cfg.cajaMin}" onchange="S.alertCfg.cajaMin=parseFloat(this.value)||0;save();render()"></div>
       <div class="field"><label>Días de aviso de entrega</label><input class="inp" type="number" value="${cfg.diasEntrega}" onchange="S.alertCfg.diasEntrega=parseFloat(this.value)||0;save();render()"></div>
       <div class="field"><label>Merma máxima (0–1)</label><input class="inp" type="number" step="0.01" value="${cfg.mermaMax}" onchange="S.alertCfg.mermaMax=parseFloat(this.value)||0;save();render()"></div>
+      <div class="field"><label>Tope de freezer (cajas)</label><input class="inp" type="number" value="${S.motor.topeFreezer||48}" onchange="setMotor('topeFreezer',this.value)"></div>
     </div></div></div>`;
 }
 
@@ -753,8 +950,10 @@ function vDatos(){
         <button class="btn" onclick="exportCSV('pedidos')">Pedidos CSV</button>
         <button class="btn" onclick="exportCSV('compras')">Compras CSV</button>
         <button class="btn" onclick="exportCSV('caja')">Caja CSV</button>
+        <button class="btn" onclick="exportClientesCSV()">Clientes CSV</button>
       </div>
     </div></div>
+    <div class="card"><div class="card-b"><div class="hint">Versión del sistema: <b>v${APP_VER}</b> · datos sincronizados en la nube (Supabase). Cada bloque técnico tiene su explicación de dónde sale el cálculo.</div></div></div>
     <div class="card"><div class="card-h"><h2>Zona peligrosa</h2></div><div class="card-b">
       <button class="btn dgr" onclick="resetAll()">🗑️ Borrar todo y volver al ejemplo</button>
     </div></div>`;
@@ -796,6 +995,9 @@ const pct=n=>(isFinite(n)?n*100:0).toLocaleString(LOCALE,{maximumFractionDigits:
 const numfmt=n=>(isFinite(n)?n:0).toLocaleString(LOCALE,{maximumFractionDigits:2});
 const fdate=s=>{if(!s)return"—";const d=new Date(s+(s.length<=10?"T00:00":""));return d.toLocaleDateString(LOCALE,{day:"2-digit",month:"2-digit",year:"numeric"})};
 const todayISO=()=>new Date().toLocaleDateString("en-CA",{timeZone:"America/Argentina/Mendoza"});
+const APP_VER="3.0";
+let simKg=8;
+function setSimKg(v){simKg=Math.max(0,parseFloat(String(v).replace(",","."))||0);render();}
 const uid=()=>(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2,7));
 const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const $=id=>document.getElementById(id);
@@ -803,7 +1005,9 @@ const $=id=>document.getElementById(id);
 // ---------------------------------------------------------------- SEED
 function seed(){return{
   marca:"SFIJA", moneda:"ARS", schema:1,
-  motor:{volumen:1500,margen:0.52,buffer:0.05,rendimiento:48,unidadesPorEnvase:6},
+  motor:{volumen:1500,margen:0.52,buffer:0.05,unidadesPorEnvase:6,recetaLock:true,
+    precioFijoU:2333.33, topeFreezer:48,
+    mano:{horaProd:0,horasTanda:0,cebollaKg:0,limonKg:0,mentaAtado:0}},
   despensa:[
     {id:uid(),tipo:"ing",nombre:"Carne (aguja/intermedia)",compra:"Picada x 1,5 kg",precio:16540,contenido:1500,unidad:"g",stock:null,stockMin:null},
     {id:uid(),tipo:"ing",nombre:"Cebolla",compra:"Malla 5 kg",precio:5000,contenido:5000,unidad:"g",stock:null,stockMin:null},
@@ -816,6 +1020,7 @@ function seed(){return{
     {id:uid(),tipo:"ing",nombre:"Sal fina",compra:"Paquete 1 kg",precio:700,contenido:1000,unidad:"g",stock:null,stockMin:null},
     {id:uid(),tipo:"ing",nombre:"Pimienta negra molida",compra:"Frasco 100 g",precio:2500,contenido:100,unidad:"g",stock:null,stockMin:null},
     {id:uid(),tipo:"ing",nombre:"Nuez moscada molida",compra:"Frasco 50 g",precio:3000,contenido:50,unidad:"g",stock:null,stockMin:null},
+    {id:uid(),tipo:"ing",nombre:"Tapa de empanada criolla (rotisería)",compra:"Plancha x 12 (precio tentativo)",precio:1800,contenido:12,unidad:"u",stock:null,stockMin:null},
     {id:uid(),tipo:"ing",nombre:"Azúcar",compra:"Paquete 1 kg",precio:1200,contenido:1000,unidad:"g",stock:null,stockMin:null},
     {id:uid(),tipo:"ing",nombre:"Agua",compra:"Red (sin costo)",precio:0,contenido:1000,unidad:"ml",stock:null,stockMin:null},
     {id:uid(),tipo:"pack",nombre:"Caja tuck-top",compra:"Compra x 100",precio:60000,contenido:100,unidad:"u",stock:null,stockMin:null},
@@ -823,22 +1028,15 @@ function seed(){return{
     {id:uid(),tipo:"pack",nombre:"Sticker cierre",compra:"Compra x 100",precio:1800,contenido:100,unidad:"u",stock:null,stockMin:null},
   ],
   recetaRelleno:[
-    {id:uid(),ref:"Carne (aguja/intermedia)",cantidad:1000,unidad:"g"},
-    {id:uid(),ref:"Cebolla",cantidad:300,unidad:"g"},
-    {id:uid(),ref:"Tomate triturado",cantidad:400,unidad:"g"},
-    {id:uid(),ref:"Menta fresca",cantidad:25,unidad:"g"},
-    {id:uid(),ref:"Limón",cantidad:30,unidad:"g"},
-    {id:uid(),ref:"Sal fina",cantidad:15,unidad:"g"},
-    {id:uid(),ref:"Pimienta negra molida",cantidad:3,unidad:"g"},
-    {id:uid(),ref:"Nuez moscada molida",cantidad:2,unidad:"g"},
-  ],
-  recetaMasa:[
-    {id:uid(),ref:"Harina 000",cantidad:850,unidad:"g"},
-    {id:uid(),ref:"Levadura fresca",cantidad:20,unidad:"g"},
-    {id:uid(),ref:"Aceite girasol",cantidad:50,unidad:"ml"},
-    {id:uid(),ref:"Sal fina",cantidad:12,unidad:"g"},
-    {id:uid(),ref:"Azúcar",cantidad:10,unidad:"g"},
-    {id:uid(),ref:"Agua",cantidad:480,unidad:"ml"},
+    {id:uid(),ref:"Carne (aguja/intermedia)",cantidad:39.34,unidad:"g"},
+    {id:uid(),ref:"Cebolla",cantidad:11.53,unidad:"g"},
+    {id:uid(),ref:"Tomate triturado",cantidad:15.38,unidad:"g"},
+    {id:uid(),ref:"Menta fresca",cantidad:1.53,unidad:"g"},
+    {id:uid(),ref:"Limón",cantidad:1.80,unidad:"g"},
+    {id:uid(),ref:"Sal fina",cantidad:0.76,unidad:"g"},
+    {id:uid(),ref:"Pimienta negra molida",cantidad:0.04,unidad:"g"},
+    {id:uid(),ref:"Nuez moscada molida",cantidad:0.28,unidad:"g"},
+    {id:uid(),ref:"Tapa de empanada criolla (rotisería)",cantidad:1,unidad:"u"},
   ],
   packagingEnvase:[
     {id:uid(),ref:"Caja tuck-top",cantidad:1},
@@ -891,6 +1089,7 @@ function seed(){return{
   ],
   caja:[],
   preciosHist:[],
+  alertasCfg:[],
   alertCfg:{cajaMin:50000,diasEntrega:2,mermaMax:0.10},
 };}
 
@@ -899,10 +1098,10 @@ const SB_URL="https://vmdqfamdthfnwuitmhth.supabase.co";
 const SB_KEY="sb_publishable_bjFaKJWwJzl3T4BX_YGBoQ_x9YOgOYN";
 const sb=supabase.createClient(SB_URL,SB_KEY,{realtime:{params:{eventsPerSecond:10}}});
 
-const COLL2TBL={despensa:"despensa",recetaRelleno:"receta_relleno",recetaMasa:"receta_masa",
+const COLL2TBL={despensa:"despensa",recetaRelleno:"receta_relleno",
  packagingEnvase:"packaging_envase",costosFijos:"costos_fijos",costosServicios:"costos_servicios",
  costosSemivar:"costos_semivar",costosOtros:"costos_otros",equipos:"equipos",listaPrecios:"lista_precios",
- clientes:"clientes",pedidos:"pedidos",proveedores:"proveedores",compras:"compras",produccion:"produccion",caja:"caja",preciosHist:"precio_historial"};
+ clientes:"clientes",pedidos:"pedidos",proveedores:"proveedores",compras:"compras",produccion:"produccion",caja:"caja",preciosHist:"precio_historial",alertasCfg:"alertas_cfg"};
 
 let S=null, ME=null;
 const suppressEcho=new Set();
@@ -983,19 +1182,82 @@ function delRow(coll,id,name){
   });
 }
 function setMotor(field,val){S.motor[field]=parseFloat(String(val).replace(",","."))||0;save();render();}
+function setMano(field,val){ if(!S.motor.mano)S.motor.mano={}; S.motor.mano[field]=parseFloat(String(val).replace(",","."))||0; save(); render(); }
+function setPrecioCaja(val){ const uxe=S.motor.unidadesPorEnvase||6; S.motor.precioFijoU=(parseFloat(String(val).replace(",","."))||0)/uxe; save(); render(); }
+
+// ---- MODO (por dispositivo, no se sincroniza) ----
+function getModo(){ try{return localStorage.getItem("sfija_modo")||"gestion";}catch(e){return "gestion";} }
+function setModo(mo){ try{localStorage.setItem("sfija_modo",mo);}catch(e){} CUR="inicio"; closeModal&&closeModal(); render(); toast(mo==="produccion"?"Modo Producción 👩‍🍳":"Modo Gestión 📊"); }
+
+// ---- Mini gráfico de barras (sin librerías) ----
+function barChart(data,opt){ // data: [{label,value}]
+  opt=opt||{}; const max=Math.max(1,...data.map(d=>d.value));
+  const fmt=opt.money?money:(n=>n.toLocaleString(LOCALE));
+  return `<div style="display:flex;align-items:flex-end;gap:6px;height:140px;padding:8px 2px">
+    ${data.map(d=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end">
+       <div style="font-size:10px;color:var(--ink-faint);font-weight:600">${d.value?fmt(d.value):''}</div>
+       <div title="${esc(d.label)}: ${fmt(d.value)}" style="width:100%;max-width:34px;height:${Math.round((d.value/max)*100)}%;min-height:${d.value?4:0}px;background:var(--kraft);border-radius:5px 5px 0 0"></div>
+       <div style="font-size:10px;color:var(--ink-soft)">${esc(d.label)}</div>
+     </div>`).join("")}
+  </div>`;
+}
+function downloadCSV(filename,rows){ // rows: array of arrays
+  const csv=rows.map(r=>r.map(c=>{const s=(c==null?'':String(c)); return /[",\n;]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}).join(";")).join("\n");
+  const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=filename; a.click();
+}
+function exportClientesCSV(){
+  const rows=[["Nombre","Teléfono","Email","Dirección","Localidad","Día entrega","Horario","Cumpleaños","Preferencias","Notas"]];
+  S.clientes.forEach(c=>rows.push([c.nombre,c.telefono,c.email,c.direccion,c.localidad,c.diaEntrega,c.horario,c.cumple,c.preferencias,c.notas]));
+  downloadCSV("clientes_sfija.csv",rows); toast("Clientes exportados");
+}
+function mesActualISO(){const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");}
+function clienteModal(id){
+  const c=id?dlu("clientes",id):null;
+  openForm(id?"Editar cliente":"Nuevo cliente",[
+    {key:"nombre",label:"Nombre",full:true,val:c?.nombre||""},
+    {key:"telefono",label:"Teléfono",val:c?.telefono||""},
+    {key:"email",label:"Email",val:c?.email||""},
+    {key:"direccion",label:"Dirección",full:true,val:c?.direccion||""},
+    {key:"localidad",label:"Localidad",val:c?.localidad||""},
+    {key:"diaEntrega",label:"Día de entrega",type:"select",opts:["","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"].map(x=>({v:x,t:x||"—"})),val:c?.diaEntrega||""},
+    {key:"horario",label:"Horario preferido",val:c?.horario||""},
+    {key:"cumple",label:"Cumpleaños",type:"date",val:c?.cumple||""},
+    {key:"preferencias",label:"Preferencias",full:true,val:c?.preferencias||""},
+    {key:"notas",label:"Notas",type:"textarea",val:c?.notas||""},
+  ],o=>{ if(!o.nombre){toast("Poné un nombre");return;} if(id){Object.assign(c,o);dbUpsert("clientes",c);render();}else{add("clientes",o);} });
+}
+function ultPedidosCliente(nombre){
+  return S.pedidos.filter(p=>p.clienteNombre===nombre).sort((a,b)=>(b.fechaEntrega||"").localeCompare(a.fechaEntrega||"")).slice(0,3);
+}
 
 // ---------------------------------------------------------------- ENGINE
 function usoOf(ref){const d=S.despensa.find(x=>x.nombre===ref); if(!d||!d.contenido)return 0; return (d.precio||0)/d.contenido;}
 function compute(){
-  const m=S.motor, vol=m.volumen||1, rend=m.rendimiento||1, uxe=m.unidadesPorEnvase||1, buf=m.buffer||0;
+  const m=S.motor, vol=m.volumen||1, uxe=m.unidadesPorEnvase||1, buf=m.buffer||0;
   const costRow=r=>(r.cantidad||0)*usoOf(r.ref);
-  const subRelleno=S.recetaRelleno.reduce((a,r)=>a+costRow(r),0);
-  const subMasa=S.recetaMasa.reduce((a,r)=>a+costRow(r),0);
-  const subIngred=subRelleno+subMasa;
-  const ingred_u=subIngred/rend;
+  // La receta es POR UNIDAD: cada línea es lo que lleva 1 sfija.
+  const ingred_u=S.recetaRelleno.reduce((a,r)=>a+costRow(r),0);
+  const carneRow=S.recetaRelleno.find(r=>/carne/i.test(r.ref));
+  const carne_g_u=carneRow?(carneRow.cantidad||0):0;          // g de carne por unidad
+  const rend_kg=carne_g_u>0?1000/carne_g_u:0;                 // unidades por kg de carne
+  const rend=rend_kg*4;                                       // unidades por tanda (4 kg)
+  const relleno_g=S.recetaRelleno.filter(r=>(r.unidad||'')==='g').reduce((a,r)=>a+(r.cantidad||0),0);
+
   const packEnvase=S.packagingEnvase.reduce((a,r)=>a+costRow(r),0);
   const pack_u=packEnvase/uxe;
-  const directo_u=ingred_u+pack_u;
+
+  // --- Mano de obra (Bloque 3) ---
+  const mano=m.mano||{};
+  const rendTanda=rend_kg*4;
+  const gPorU=ref=>{const r=S.recetaRelleno.find(x=>new RegExp(ref,'i').test(x.ref)); return r?(r.cantidad||0):0;};
+  const mano_gen_u = (rendTanda>0)? ((mano.horaProd||0)*(mano.horasTanda||0))/rendTanda : 0;
+  const prep_cebolla_u = (gPorU('cebolla')/1000)*(mano.cebollaKg||0);
+  const prep_limon_u   = (gPorU('lim[oó]n')/1000)*(mano.limonKg||0);
+  const prep_menta_u   = (gPorU('menta')/50)*(mano.mentaAtado||0); // ~50 g por atado
+  const mano_u = mano_gen_u + prep_cebolla_u + prep_limon_u + prep_menta_u;
+
+  const directo_u=ingred_u+pack_u+mano_u;
 
   const fijos_imp_mes=
     S.costosFijos.reduce((a,x)=>a+(x.monto||0),0)+
@@ -1014,19 +1276,26 @@ function compute(){
   const caja_u=(directo_u + fijos_caja_mes/vol + cuota_caja_mes/vol)*(1+buf);
   const precio_u=sostenible_u/(1-(m.margen||0));
   const precio_envase=precio_u*uxe;
-  const contrib_u=precio_u-directo_u;
+  // --- Precio FIJADO manualmente (Bloque 8) ---
+  const precio_fijo_u = (m.precioFijoU!=null? m.precioFijoU : 2333.33);
+  const precio_fijo_caja = precio_fijo_u*uxe;
+  const margen_real = precio_fijo_u? (precio_fijo_u - sostenible_u)/precio_fijo_u : 0;
+  const gan_real_u = precio_fijo_u - sostenible_u;
+  const precio_bajo_costo = precio_fijo_u < sostenible_u;
+  const contrib_u=precio_fijo_u-directo_u;
   const colchon_u=sostenible_u-caja_u;
   const ganancia_sost_u=precio_u-sostenible_u;
-  const margen_caja=precio_u? (precio_u-caja_u)/precio_u : 0;
-  const carneRow=S.recetaRelleno.find(r=>/carne/i.test(r.ref));
-  const carne_u=carneRow? costRow(carneRow)/rend : 0;
+  const margen_caja=precio_fijo_u? (precio_fijo_u-caja_u)/precio_fijo_u : 0;
+  const carne_u=carneRow? costRow(carneRow) : 0;
   const pct_carne=sostenible_u? carne_u/sostenible_u : 0;
   const equilibrio=contrib_u>0? Math.ceil(fijos_imp_mes/contrib_u):0;
 
-  return {subRelleno,subMasa,subIngred,ingred_u,packEnvase,pack_u,directo_u,
+  return {ingred_u,packEnvase,pack_u,directo_u,relleno_g,carne_g_u,rend_kg,
+    mano_u,mano_gen_u,prep_cebolla_u,prep_limon_u,prep_menta_u,
     fijos_imp_mes,fijos_caja_mes,amort_mes,cuota_caja_mes,
-    sostenible_u,caja_u,precio_u,precio_envase,contrib_u,colchon_u,
-    ganancia_sost_u,margen_caja,carne_u,pct_carne,equilibrio,vol,rend,uxe,buf};
+    sostenible_u,caja_u,precio_u,precio_envase,
+    precio_fijo_u,precio_fijo_caja,margen_real,gan_real_u,precio_bajo_costo,
+    contrib_u,colchon_u,ganancia_sost_u,margen_caja,carne_u,pct_carne,equilibrio,vol,rend,uxe,buf};
 }
 function saldoCaja(){return S.caja.reduce((a,m)=>a+(m.ingreso||0)-(m.egreso||0),0);}
 
@@ -1061,48 +1330,71 @@ function alerts(){
   });
   const bajos=S.listaPrecios.filter(l=>{const sug=C.precio_u*(l.unidades||0);return sug>0&&(l.precio||0)<sug*0.98;});
   if(bajos.length) A.push({t:"warn",ic:"🏷️",b:"Precios por debajo del sugerido",p:`${bajos.length} variante/s conviene revisar (subieron costos). Mirá Proveedores.`});
+  if(C.precio_bajo_costo) A.push({t:"bad",ic:"🏷️",b:"Precio por debajo del costo real",p:`Tu precio fijado (${money2(C.precio_fijo_u)}/u) está por debajo del costo sostenible (${money2(C.sostenible_u)}/u).`});
+  // --- Freezer / tope (Bloque 5/9) ---
+  const uxe=C.uxe||6, tope=S.motor.topeFreezer||48;
+  const stockU=S.produccion.reduce((a,p)=>a+((p.unidades||0)-(p.vendidas||0)),0);
+  const cajasStock=stockU/uxe;
+  if(cajasStock>tope) A.push({t:"bad",ic:"🧊",b:"Freezer excedido",p:`${Math.floor(cajasStock)} cajas en stock; el tope es ${tope}.`});
+  else if(cajasStock>=tope*0.9) A.push({t:"warn",ic:"🧊",b:"Freezer casi lleno",p:`${Math.floor(cajasStock)} de ${tope} cajas.`});
+  // --- Alertas configurables (Bloque 9) ---
+  (S.alertasCfg||[]).forEach(ac=>{
+    if(ac.tipo==="stock_caja" && cajasStock < (ac.umbral||0)) A.push({t:"warn",ic:"📦",b:ac.nombre||"Stock bajo de cajas",p:`Quedan ${Math.floor(cajasStock)} cajas (mín ${ac.umbral}).`});
+    if(ac.tipo==="suba"){ const subio=S.preciosHist.some(h=>{const d=(Date.now()-new Date(h.fecha).getTime())/86400000;return d<=60 && (h.deltaPct||0)*100>(ac.umbral||0);}); if(subio) A.push({t:"warn",ic:"📈",b:ac.nombre||"Suba de insumo",p:`Un insumo subió más de ${ac.umbral}% en 60 días.`}); }
+    if(ac.tipo==="cumple"){ const today=new Date(); S.clientes.forEach(c=>{ if(!c.cumple)return; const md=String(c.cumple).slice(5); for(let k=0;k<=(ac.umbral||7);k++){const dd=new Date(today.getTime()+k*86400000); const mm=String(dd.getMonth()+1).padStart(2,"0")+"-"+String(dd.getDate()).padStart(2,"0"); if(md===mm){A.push({t:"info",ic:"🎂",b:`Cumple de ${c.nombre}`,p:k===0?"¡Es hoy!":`En ${k} día/s.`});break;}} }); }
+  });
   return A;
 }
 
 // ---------------------------------------------------------------- ROUTER
 const PAGES=[
-  {id:"inicio",ic:"🏠",label:"Inicio"},
+  {id:"inicio",ic:"🏠",label:"Inicio",prod:true},
   {id:"calc",ic:"🧮",label:"Calculadora"},
+  {id:"simulador",ic:"⚙️",label:"Simulador",prod:true},
   {id:"despensa",ic:"🧂",label:"Despensa"},
+  {id:"stock",ic:"📦",label:"Stock",prod:true},
   {id:"receta",ic:"📋",label:"Receta"},
   {id:"costos",ic:"🏢",label:"Costos fijos"},
   {id:"inversion",ic:"🧊",label:"Inversión"},
-  {id:"produccion",ic:"👨‍🍳",label:"Producción"},
-  {id:"pedidos",ic:"🧾",label:"Pedidos"},
+  {id:"produccion",ic:"👨‍🍳",label:"Producción",prod:true},
+  {id:"pedidos",ic:"🧾",label:"Pedidos",prod:true},
   {id:"compras",ic:"🛒",label:"Compras"},
   {id:"proveedores",ic:"🚚",label:"Proveedores"},
   {id:"caja",ic:"💵",label:"Caja"},
-  {id:"alertas",ic:"🔔",label:"Alertas"},
+  {id:"alertas",ic:"🔔",label:"Alertas",prod:true},
   {id:"datos",ic:"💾",label:"Datos"},
 ];
 let CUR="inicio";
 function go(id){CUR=id; closeModal(); render(); presenceUpdate(); window.scrollTo(0,0);}
 function buildNav(){
   const nAl=alerts().length;
-  $("nav").innerHTML=PAGES.map(p=>`<button class="${p.id===CUR?'on':''}" onclick="go('${p.id}')"><span class="ic">${p.ic}</span>${p.label}${p.id==='alertas'&&nAl?`<span class="badge">${nAl}</span>`:''}</button>`).join("");
-  const bot=["inicio","calc","pedidos","produccion","_more"];
+  const prod=getModo()==="produccion";
+  const pages=prod?PAGES.filter(p=>p.prod):PAGES;
+  $("nav").innerHTML=pages.map(p=>`<button class="${p.id===CUR?'on':''}" onclick="go('${p.id}')"><span class="ic">${p.ic}</span>${p.label}${p.id==='alertas'&&nAl?`<span class="badge">${nAl}</span>`:''}</button>`).join("");
+  const bot=prod?["inicio","pedidos","produccion","simulador","_more"]:["inicio","calc","pedidos","produccion","_more"];
   $("botnav").innerHTML=bot.map(id=>{
     if(id==="_more")return `<button onclick="moreSheet()"><span class="ic">☰</span>Más</button>`;
     const p=PAGES.find(x=>x.id===id);
     return `<button class="${id===CUR?'on':''}" onclick="go('${id}')"><span class="ic">${p.ic}</span>${p.label}${id==='pedidos'&&nAl?`<span class="badge">${nAl}</span>`:''}</button>`;
   }).join("");
   $("topAlert").innerHTML= nAl?`🔔 ${nAl}`:"🔔";
-  $("sideFoot").innerHTML=`☁️ sincronizado en la nube<br>${S.despensa.length} insumos · ${S.pedidos.length} pedidos<br><button class="logout" onclick="doLogout()">Cerrar sesión${ME?` (${esc(ME.split("@")[0])})`:""}</button>`;
+  $("sideFoot").innerHTML=`<div class="modo-sw">
+      <button class="${prod?'':'on'}" onclick="setModo('gestion')">Gestión</button>
+      <button class="${prod?'on':''}" onclick="setModo('produccion')">Producción</button>
+    </div>
+    ☁️ en la nube · v${APP_VER}<br>${S.despensa.length} insumos · ${S.pedidos.length} pedidos<br><button class="logout" onclick="doLogout()">Cerrar sesión${ME?` (${esc(ME.split("@")[0])})`:""}</button>`;
 }
 function moreSheet(){
-  const items=PAGES.filter(p=>!["inicio","calc","pedidos","produccion"].includes(p.id));
+  const prod=getModo()==="produccion";
+  let items=PAGES.filter(p=>!["inicio","calc","pedidos","produccion"].includes(p.id));
+  if(prod) items=items.filter(p=>p.prod);
   openModal("Menú", items.map(p=>`<button class="btn" style="width:100%;justify-content:flex-start;margin-bottom:8px" onclick="go('${p.id}')"><span style="margin-right:8px">${p.ic}</span>${p.label}</button>`).join(""), "");
 }
 
 // ---------------------------------------------------------------- RENDER
 function render(){
   buildNav();
-  const fn={inicio:vInicio,calc:vCalc,despensa:vDespensa,receta:vReceta,costos:vCostos,
+  const fn={inicio:vInicio,calc:vCalc,simulador:vSimulador,despensa:vDespensa,stock:vStock,receta:vReceta,costos:vCostos,
     inversion:vInversion,produccion:vProduccion,pedidos:vPedidos,compras:vCompras,proveedores:vProveedores,
     caja:vCaja,alertas:vAlertas,datos:vDatos}[CUR]||vInicio;
   $("view").innerHTML=fn();
